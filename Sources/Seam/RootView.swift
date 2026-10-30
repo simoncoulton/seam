@@ -71,7 +71,10 @@ struct TabBar: View {
                 Image(systemName: "sidebar.right").padding(6).foregroundStyle(ws.showPreview ? theme.tint : theme.dim)
             }
             .buttonStyle(.plain).hoverable()
-            OptionsMenu().padding(4).hoverable()
+            Button { ws.overlay = ws.overlay == .settings ? nil : .settings } label: {
+                Image(systemName: "gearshape").padding(6).foregroundStyle(ws.overlay == .settings ? theme.tint : theme.dim)
+            }
+            .buttonStyle(.plain).hoverable()
         }
         .padding(.horizontal, 12)
         .frame(height: 44)
@@ -104,42 +107,6 @@ struct TabItem: View {
         .animation(.easeOut(duration: 0.15), value: active)
         .contentShape(Rectangle())
         .onTapGesture { ws.activeTab = index }
-    }
-}
-
-struct OptionsMenu: View {
-    private let ws = Workspace.shared
-
-    var body: some View {
-        Menu {
-            Picker("Sort by", selection: Binding(get: { ws.tab.sortKey }, set: { ws.tab.setDefaultSort(key: $0) })) {
-                ForEach(SortKey.allCases) { Text($0.rawValue).tag($0) }
-            }
-            Toggle("Ascending", isOn: Binding(get: { ws.tab.ascending }, set: { ws.tab.setDefaultSort(ascending: $0) }))
-            Toggle("Group folders first", isOn: Binding(get: { ws.tab.foldersFirst }, set: { ws.tab.foldersFirst = $0; ws.tab.refreshAll() }))
-            Toggle("Show hidden files", isOn: Binding(get: { ws.tab.showHidden }, set: { ws.tab.showHidden = $0 }))
-            Divider()
-            Toggle("Theme-colored icons", isOn: Binding(get: { ws.monoIcons }, set: { ws.monoIcons = $0 }))
-            Toggle("Airy density", isOn: Binding(get: { ws.airy }, set: { ws.airy = $0 }))
-            Toggle("Peek into folders", isOn: Binding(get: { ws.peekFolders }, set: { ws.peekFolders = $0 }))
-            Toggle("Sidebar", isOn: Binding(get: { ws.showSidebar }, set: { ws.showSidebar = $0 }))
-            Toggle("Hide Pinned when empty", isOn: Binding(get: { ws.hidePinnedWhenEmpty }, set: { ws.hidePinnedWhenEmpty = $0 }))
-            Divider()
-            Menu("Window opacity") {
-                ForEach([1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2], id: \.self) { v in
-                    Button((abs(v - ws.opacity) < 0.01 ? "✓ " : "") + (v == 1 ? "Opaque" : "\(Int(v * 100))%")) { ws.opacity = v }
-                }
-            }
-            Menu("Theme") {
-                ForEach(ws.themes) { t in
-                    Button(t.name + (t == ws.theme ? " ✓" : "")) { ws.setTheme(t) }
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis.circle")
-        }
-        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-        .foregroundStyle(ws.theme.dim)
     }
 }
 

@@ -19,15 +19,15 @@ final class BrowserState: Identifiable {
     let id = UUID()
     var columns: [Column] = []
     var focus = 0
-    var sortKey: SortKey = .name
-    var ascending = true
-    var showHidden = UserDefaults.standard.object(forKey: "showHidden") as? Bool ?? true {
+    var sortKey: SortKey = SettingsStore.current.sortKey { didSet { SettingsStore.update { $0.sortKey = sortKey } } }
+    var ascending = SettingsStore.current.sortAscending { didSet { SettingsStore.update { $0.sortAscending = ascending } } }
+    var showHidden = SettingsStore.current.showHidden {
         didSet {
-            UserDefaults.standard.set(showHidden, forKey: "showHidden")
+            SettingsStore.update { $0.showHidden = showHidden }
             refreshAll()
         }
     }
-    var foldersFirst = true
+    var foldersFirst = SettingsStore.current.foldersFirst { didSet { SettingsStore.update { $0.foldersFirst = foldersFirst } } }
     var marks: Set<URL> = []
     /// The row last marked by hand; Shift+M marks everything between it and the current row.
     var markAnchor: URL?
@@ -43,8 +43,7 @@ final class BrowserState: Identifiable {
     private var historyIndex = -1
     private var watchers: [UUID: DirWatcher] = [:]
     private var peekTask: Task<Void, Never>?
-    /// Mirrors `Workspace.peekFolders`, read from defaults so tabs created before the setting loads agree with it.
-    private var peeksChildren: Bool { UserDefaults.standard.bool(forKey: "peekFolders") }
+    private var peeksChildren: Bool { SettingsStore.current.peekFolders }
 
     init(start: URL) { go(start) }
 
@@ -203,6 +202,16 @@ final class BrowserState: Identifiable {
             reload(columns.count - 1)
         }
         syncWatchers()
+    }
+
+    /// Moves the selection to the row above the first of `urls`, ahead of those rows being deleted. When the first
+    /// row goes there is nothing above it, and the reload falls back to the new first row.
+    func selectRowBefore(removing urls: [URL]) {
+        let list = shown
+        let gone = Set(urls)
+        guard let first = list.firstIndex(where: { gone.contains($0.url) }),
+              let above = list[..<first].last else { return }
+        select(above.url, inColumn: focus)
     }
 
     /// Opens or closes the column beside the focused one after the peek setting changes.

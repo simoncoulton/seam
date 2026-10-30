@@ -3,7 +3,7 @@ import NetFS
 import Observation
 import SwiftUI
 
-enum Overlay { case search, location, shortcuts, preview }
+enum Overlay { case search, location, shortcuts, preview, settings }
 
 struct SidebarPlace: Identifiable, Hashable, Codable {
     var name: String
@@ -46,28 +46,27 @@ final class Workspace {
     var themes: [Theme] = Themes.presets
     var theme: Theme = Themes.presets[0]
     var pins: [URL] = []
-    var showPreview = true { didSet { defaults.set(showPreview, forKey: "showPreview") } }
-    var showSidebar = true
+    var showPreview = true { didSet { SettingsStore.update { $0.showPreview = showPreview } } }
+    var showSidebar = true { didSet { SettingsStore.update { $0.showSidebar = showSidebar } } }
     /// Show the selected folder's contents in a column beside it as soon as it is selected; off means a column
     /// only opens when you navigate into the folder.
     var peekFolders = false {
         didSet {
-            defaults.set(peekFolders, forKey: "peekFolders")
+            SettingsStore.update { $0.peekFolders = peekFolders }
             tabs.forEach { $0.syncChildColumn() }
         }
     }
-    var previewWidth: CGFloat = 300 { didSet { defaults.set(Double(previewWidth), forKey: "previewWidth") } }
-    var hidePinnedWhenEmpty = false { didSet { defaults.set(hidePinnedWhenEmpty, forKey: "hidePinnedWhenEmpty") } }
-    var monoIcons = false { didSet { defaults.set(monoIcons, forKey: "monoIcons") } }
+    var previewWidth: CGFloat = 300 { didSet { SettingsStore.update { $0.previewWidth = Double(previewWidth) } } }
+    var hidePinnedWhenEmpty = false { didSet { SettingsStore.update { $0.hidePinnedWhenEmpty = hidePinnedWhenEmpty } } }
+    var monoIcons = false { didSet { SettingsStore.update { $0.monoIcons = monoIcons } } }
     /// Window tint opacity; below 1 the window turns translucent with a blur behind it.
-    var opacity = 1.0 { didSet { defaults.set(opacity, forKey: "opacity") } }
-    var textScale = 1.0 { didSet { defaults.set(textScale, forKey: "textScale") } }
-    var airy = false { didSet { defaults.set(airy, forKey: "airy") } }
+    var opacity = 1.0 { didSet { SettingsStore.update { $0.opacity = opacity } } }
+    var textScale = 1.0 { didSet { SettingsStore.update { $0.textScale = textScale } } }
+    var airy = false { didSet { SettingsStore.update { $0.airy = airy } } }
 
     private var clipboard: (urls: [URL], cut: Bool)?
     private var undoStack: [(label: String, run: () -> Void)] = []
     private var toastTask: Task<Void, Never>?
-    private let defaults = UserDefaults.standard
     private var monitor: Any?
 
     var tab: BrowserState { tabs[activeTab] }
@@ -76,22 +75,22 @@ final class Workspace {
     var iconTint: Color { theme.tint }
 
     init() {
-        themes = Themes.presets + Themes.loadCustom()
-        if let name = defaults.string(forKey: "theme"), let t = themes.first(where: { $0.name == name }) { theme = t }
-        pins = (defaults.stringArray(forKey: "pins") ?? []).map {
-            $0.contains("://") ? (URL(string: $0) ?? URL(fileURLWithPath: $0)) : URL(fileURLWithPath: $0)
-        }
-        loadPlaces()
-        if defaults.object(forKey: "showPreview") != nil { showPreview = defaults.bool(forKey: "showPreview") }
-        let scale = defaults.double(forKey: "textScale")
-        if scale > 0 { textScale = scale }
-        airy = defaults.bool(forKey: "airy")
-        peekFolders = defaults.bool(forKey: "peekFolders")
-        monoIcons = defaults.bool(forKey: "monoIcons")
-        let savedWidth = defaults.double(forKey: "previewWidth")
-        if savedWidth > 0 { previewWidth = min(max(CGFloat(savedWidth), 220), 560) }
-        hidePinnedWhenEmpty = defaults.bool(forKey: "hidePinnedWhenEmpty")
-        if defaults.object(forKey: "opacity") != nil { opacity = defaults.double(forKey: "opacity") }
+        Themes.seedIfNeeded()
+        themes = Themes.all()
+        let saved = SettingsStore.current
+        if let t = themes.first(where: { $0.name == saved.theme }) { theme = t }
+        let sidebar = SidebarStore.load()
+        pins = sidebar.pins
+        places = sidebar.places ?? Self.defaultPlaces()
+        showPreview = saved.showPreview
+        showSidebar = saved.showSidebar
+        textScale = saved.textScale
+        airy = saved.airy
+        peekFolders = saved.peekFolders
+        monoIcons = saved.monoIcons
+        previewWidth = CGFloat(saved.previewWidth)
+        hidePinnedWhenEmpty = saved.hidePinnedWhenEmpty
+        opacity = saved.opacity
         tabs = [BrowserState(start: FileManager.default.homeDirectoryForCurrentUser)]
         refreshVolumes()
         refreshCloud()
@@ -121,17 +120,7 @@ final class Workspace {
         ]
     }
 
-    private func loadPlaces() {
-        if let data = defaults.data(forKey: "places"), let saved = try? JSONDecoder().decode([SidebarPlace].self, from: data) {
-            places = saved
-        } else {
-            places = Self.defaultPlaces()
-        }
-    }
-
-    private func savePlaces() {
-        if let data = try? JSONEncoder().encode(places) { defaults.set(data, forKey: "places") }
-    }
+    private func savePlaces() { SidebarStore.save(pins: pins, places: places) }
 
     func addPlace(_ url: URL) {
         guard !places.contains(where: { $0.url == url }) else { toast("\(url.lastPathComponent) is already in Places"); return }
@@ -270,9 +259,7 @@ final class Workspace {
 
     func isPinned(_ url: URL) -> Bool { pins.contains(url) }
 
-    private func savePins() {
-        defaults.set(pins.map { $0.isFileURL ? $0.path : $0.absoluteString }, forKey: "pins")
-    }
+    private func savePins() { SidebarStore.save(pins: pins, places: places) }
 
     func pinAddress(_ text: String) {
         let t = text.trimmingCharacters(in: .whitespaces)
@@ -353,8 +340,22 @@ final class Workspace {
 
     func setTheme(_ t: Theme) {
         theme = t
-        defaults.set(t.name, forKey: "theme")
+        SettingsStore.update { $0.theme = t.name }
     }
+
+    /// Re-reads the themes folder (after editing a theme file), keeping the current theme selected by name.
+    func reloadThemes() {
+        themes = Themes.all()
+        if let t = themes.first(where: { $0.name == theme.name }) { theme = t }
+    }
+
+    // Settings that live on each tab apply to every open tab and become the default for new ones.
+
+    func setShowHidden(_ on: Bool) { tabs.forEach { $0.showHidden = on } }
+
+    func setFoldersFirst(_ on: Bool) { tabs.forEach { $0.foldersFirst = on; $0.refreshAll() } }
+
+    func setSort(key: SortKey? = nil, ascending: Bool? = nil) { tabs.forEach { $0.setDefaultSort(key: key, ascending: ascending) } }
 
     func saveThemeCopy() {
         var t = theme
@@ -362,9 +363,9 @@ final class Workspace {
                   text: t.text, subtext: t.subtext, accent: t.accent, selection: t.selection)
         do {
             let url = try Themes.save(t)
-            themes = Themes.presets + Themes.loadCustom()
+            themes = Themes.all()
             NSWorkspace.shared.activateFileViewerSelecting([url])
-            toast("Saved \(url.lastPathComponent). Edit the colors, then relaunch to load changes.")
+            toast("Saved \(url.lastPathComponent). Edit the colors, then reopen Settings to load changes.")
         } catch { toast("Couldn't save theme: \(error.localizedDescription)") }
     }
 
@@ -475,6 +476,7 @@ final class Workspace {
         }
         guard !moved.isEmpty else { return }
         pushUndo("trash") { for m in moved { try? FileManager.default.moveItem(at: m.trashed, to: m.from) } }
+        tab.selectRowBefore(removing: moved.map(\.from))
         tab.marks = []
         tab.reloadAll()
     }
@@ -492,9 +494,11 @@ final class Workspace {
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         var failed = 0
+        var removed: [URL] = []
         for u in urls {
-            do { try FileManager.default.removeItem(at: u) } catch { failed += 1; toast(error.localizedDescription) }
+            do { try FileManager.default.removeItem(at: u); removed.append(u) } catch { failed += 1; toast(error.localizedDescription) }
         }
+        tab.selectRowBefore(removing: removed)
         if failed < urls.count { toast("Deleted \(urls.count - failed) item\(urls.count - failed == 1 ? "" : "s")") }
         tab.marks = []
         tab.reloadAll()
@@ -673,6 +677,8 @@ final class Workspace {
         let code = e.keyCode
         let letter = Self.letterByKeyCode[code] ?? ""
         let chars = e.charactersIgnoringModifiers ?? ""
+
+        if cmd, !shift, code == 43 { overlay = overlay == .settings ? nil : .settings; return true }
 
         // Overlays own the keyboard.
         if let o = overlay {

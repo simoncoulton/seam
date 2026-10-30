@@ -10,7 +10,9 @@ Notes for AI agents working on Seam, a keyboard-first, Miller-column file manage
     scripts/bundle.sh debug        # -> build/Seam.app (release by default without the argument)
     swift scripts/make-icon.swift Resources/AppIcon.icns   # regenerate the icon
 
-- Bundle id `dev.seam.macos`; settings live in that UserDefaults domain and in `~/Library/Application Support/Seam/`.
+- Bundle id `dev.seam.macos`. Config lives in `~/.config/seam/` as YAML: `settings.yml`, `sidebar.yml` (pins and
+  places) and `themes/*.yml`. `SEAM_CONFIG_DIR` overrides the folder; **tests must set it** so they never touch the
+  user's real config. Old UserDefaults and TOML data is only read, once, by `Legacy` in `Config.swift`.
 - Only the Command Line Tools are installed, not Xcode. There is no SwiftUIMacros plugin, so **`@State` does not
   compile**. Use `Local<T>` (an `ObservableObject` in `Model.swift`) with `@StateObject`. `@Observable` works.
 - Swift 5 language mode, macOS 14 minimum. Build warnings about Sendable and `NSEvent` are known and harmless.
@@ -30,10 +32,14 @@ Notes for AI agents working on Seam, a keyboard-first, Miller-column file manage
 | `Location.swift` | Location bar: shell-style Tab completion, `smb://` share listing and mounting |
 | `SearchModel.swift` | Fuzzy file search (on-demand index, see below) |
 | `DiskSize.swift` | Recursive size scanner (`getattrlistbulk`) and cache, used by the footer |
-| `Preview.swift`, `Hover.swift`, `Theme.swift`, `Model.swift` | Previews, hover and icon helpers, themes (17 presets + TOML), shared types |
+| `Config.swift`, `YAML.swift` | `~/.config/seam` paths, `Settings`/`SettingsStore` (debounced write on every change), `SidebarStore`, the one-time `Legacy` import; a small dependency-free YAML subset parser/writer |
+| `Preview.swift`, `Hover.swift`, `Theme.swift`, `Model.swift` | Previews, hover and icon helpers, themes (17 presets, seeded to `themes/*.yml`), shared types |
 
 ## Conventions and invariants
 
+- **Settings persistence:** a setting is a property whose `didSet` calls `SettingsStore.update { ... }`; never write
+  to UserDefaults. The Settings overlay (`SettingsOverlay`, `⌘,`, the cog) just binds to those properties. Per-tab
+  options (hidden files, sort, folders first) are applied to every tab through `Workspace.setShowHidden` etc.
 - **All keys go through `Workspace.handle(_:)`**, installed with `NSEvent.addLocalMonitorForEvents`. It sees events
   before the menu bar does, which is why menu items only mirror shortcuts (for display) and why ⌘+HJKL-style
   shortcuts are avoided (the user runs Aerospace). Letters are matched by physical key code (`letterByKeyCode`), so

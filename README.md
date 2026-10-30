@@ -14,7 +14,7 @@ Builds with the Command Line Tools alone (macOS 14+). `@State` is replaced by `L
 
 ## Keys
 
-Press `F1` or `?` in the app. Highlights: `Cmd+O` go to location (Tab completes folders, or shares after `smb://server/`), `y` / `p` copy / paste (also ⌘C / ⌘V), drag sidebar rows to reorder, `h j k l` move, `l` open, `Return` rename, `Space` preview (`Shift+Space` for a popup), `Cmd+F` find files under the current folder (indexed only while it is open), `/` filter a column, `m` mark, `Shift+M` mark everything from the last mark to here, `r` rename too.
+Press `F1` or `?` in the app. Highlights: `Cmd+,` settings, `Cmd+O` go to location (Tab completes folders, or shares after `smb://server/`), `y` / `p` copy / paste (also ⌘C / ⌘V), drag sidebar rows to reorder, `h j k l` move, `l` open, `Return` rename, `Space` preview (`Shift+Space` for a popup), `Cmd+F` find files under the current folder (indexed only while it is open), `/` filter a column, `m` mark, `Shift+M` mark everything from the last mark to here, `r` rename too.
 
 ### Find
 
@@ -49,7 +49,21 @@ Pin a folder to keep it at the top of the sidebar.
 
 Options menu > **Peek into folders** (off by default) shows the selected folder's contents in the next column straight away. With it off, a folder opens when you navigate into it (`l`, → or ⌘↓).
 
-Custom themes: drop a TOML file in `~/Library/Application Support/Seam/themes/` (see Theme menu > Save Current Theme).
+## Settings and config
+
+The cog in the tab bar (or `⌘,`) opens Settings. Every change is written straight away to `~/.config/seam/`:
+
+    settings.yml     theme, opacity, text size, sort, hidden files, peek, preview, sidebar, ...
+    sidebar.yml      pinned folders and the Places list
+    themes/*.yml     one theme per file
+
+All of it is plain YAML, so you can edit it by hand while Seam is closed. Comments aren't kept when Seam saves.
+The first launch imports anything saved by older versions (preferences, pins, Places and TOML themes); the old
+data is left where it was.
+
+Themes: the built-in themes are written to `themes/` on first launch. Copy one, change the colors, and it shows up
+in Settings (reopen Settings to reload). A theme needs `name`, `background`, `text` and `accent`; `dark`, `surface`,
+`subtext` and `selection` are optional. Theme menu > Save Current Theme as a Copy writes one for you.
 
 ## Not yet done
 

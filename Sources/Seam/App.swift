@@ -40,6 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { SettingsStore.flush() }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 }
 
@@ -47,6 +51,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// `Workspace.handle`, which sees events before the menu does.
 struct SeamCommands: Commands {
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { Workspace.shared.overlay = .settings }.keyboardShortcut(",")
+        }
         CommandGroup(replacing: .newItem) {
             Button("New Tab") { Workspace.shared.newTab() }.keyboardShortcut("t")
             Button("New File") { Workspace.shared.newFile() }.keyboardShortcut("n")
@@ -67,7 +74,7 @@ struct SeamCommands: Commands {
                 Button(t.name) { Workspace.shared.setTheme(t) }
             }
             Divider()
-            Button("Save Current Theme as TOML…") { Workspace.shared.saveThemeCopy() }
+            Button("Save Current Theme as a Copy…") { Workspace.shared.saveThemeCopy() }
         }
     }
 }

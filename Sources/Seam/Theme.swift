@@ -18,41 +18,43 @@ struct Theme: Identifiable, Hashable {
     var tint: Color { Color(hex: accent) }
     var sel: Color { Color(hex: selection) }
 
-    func toml() -> String {
-        """
-        name = "\(name)"
-        dark = \(isDark)
-        background = "\(background)"
-        surface = "\(surface)"
-        text = "\(text)"
-        subtext = "\(subtext)"
-        accent = "\(accent)"
-        selection = "\(selection)"
-        """
+    var yaml: YAML {
+        .map([
+            ("name", .string(name)), ("dark", .bool(isDark)),
+            ("background", .string(background)), ("surface", .string(surface)),
+            ("text", .string(text)), ("subtext", .string(subtext)),
+            ("accent", .string(accent)), ("selection", .string(selection)),
+        ])
     }
 
-    /// Parses the flat `key = value` TOML subset that `toml()` writes.
-    static func parse(_ source: String) -> Theme? {
-        var kv: [String: String] = [:]
-        for raw in source.split(whereSeparator: \.isNewline) {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") || line.hasPrefix("[") { continue }
-            let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-            guard parts.count == 2 else { continue }
-            kv[parts[0]] = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\""))
-        }
-        guard let name = kv["name"], let bg = kv["background"], let fg = kv["text"], let accent = kv["accent"] else { return nil }
-        return Theme(
+    /// Only `name`, `background`, `text` and `accent` are required; the rest fall back to sensible colors.
+    init?(yaml: YAML) {
+        guard let name = yaml["name"]?.string, let bg = yaml["background"]?.string,
+              let fg = yaml["text"]?.string, let accent = yaml["accent"]?.string else { return nil }
+        self.init(
             name: name,
-            isDark: kv["dark"] != "false",
+            isDark: yaml["dark"]?.bool ?? true,
             background: bg,
-            surface: kv["surface"] ?? bg,
+            surface: yaml["surface"]?.string ?? bg,
             text: fg,
-            subtext: kv["subtext"] ?? fg,
+            subtext: yaml["subtext"]?.string ?? fg,
             accent: accent,
-            selection: kv["selection"] ?? accent
+            selection: yaml["selection"]?.string ?? accent
         )
     }
+
+    init(name: String, isDark: Bool, background: String, surface: String, text: String, subtext: String, accent: String, selection: String) {
+        self.name = name
+        self.isDark = isDark
+        self.background = background
+        self.surface = surface
+        self.text = text
+        self.subtext = subtext
+        self.accent = accent
+        self.selection = selection
+    }
+
+    static let fileHeader = "Seam theme. Colors are hex (#rrggbb). Seam reads every .yml file in this folder;\nreopen Settings or relaunch after editing."
 }
 
 extension Color {
@@ -89,24 +91,38 @@ enum Themes {
         Theme(name: "Monokai", isDark: true, background: "#272822", surface: "#2f302a", text: "#f8f8f2", subtext: "#908f85", accent: "#a6e22e", selection: "#49483e"),
     ]
 
-    static var directory: URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Seam/themes", isDirectory: true)
+    static var directory: URL { ConfigPaths.themes }
+
+    static func fileName(for theme: Theme) -> String {
+        theme.name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-") + ".yml"
     }
 
-    static func loadCustom() -> [Theme] {
+    /// Writes the built-in themes (and any old TOML ones) into the themes folder the first time it is needed, so
+    /// there is a file to copy and edit for every theme.
+    static func seedIfNeeded() {
+        guard !FileManager.default.fileExists(atPath: directory.path) else { return }
+        for t in presets + Legacy.themes() { _ = try? save(t) }
+    }
+
+    /// Themes from the folder, with the built-ins filling in any that have no file (so the list is never empty).
+    static func all() -> [Theme] {
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
-        return urls
-            .filter { $0.pathExtension == "toml" }
+        let custom = urls.filter { ["yml", "yaml"].contains($0.pathExtension.lowercased()) }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
             .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
-            .compactMap(Theme.parse)
+            .compactMap { YAML.parse($0) }
+            .compactMap(Theme.init(yaml:))
+        let byName = Dictionary(custom.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        let builtIn = presets.map { byName[$0.name] ?? $0 }
+        let extra = custom.filter { c in !presets.contains { $0.name == c.name } }
+        return builtIn + extra
     }
 
+    @discardableResult
     static func save(_ theme: Theme) throws -> URL {
+        let url = directory.appendingPathComponent(fileName(for: theme))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let safe = theme.name.replacingOccurrences(of: "/", with: "-")
-        let url = directory.appendingPathComponent("\(safe).toml")
-        try theme.toml().write(to: url, atomically: true, encoding: .utf8)
+        try theme.yaml.render(header: Theme.fileHeader).write(to: url, atomically: true, encoding: .utf8)
         return url
     }
 }
