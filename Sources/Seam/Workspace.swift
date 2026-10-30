@@ -48,6 +48,14 @@ final class Workspace {
     var pins: [URL] = []
     var showPreview = true { didSet { defaults.set(showPreview, forKey: "showPreview") } }
     var showSidebar = true
+    /// Show the selected folder's contents in a column beside it as soon as it is selected; off means a column
+    /// only opens when you navigate into the folder.
+    var peekFolders = false {
+        didSet {
+            defaults.set(peekFolders, forKey: "peekFolders")
+            tabs.forEach { $0.syncChildColumn() }
+        }
+    }
     var previewWidth: CGFloat = 300 { didSet { defaults.set(Double(previewWidth), forKey: "previewWidth") } }
     var hidePinnedWhenEmpty = false { didSet { defaults.set(hidePinnedWhenEmpty, forKey: "hidePinnedWhenEmpty") } }
     var monoIcons = false { didSet { defaults.set(monoIcons, forKey: "monoIcons") } }
@@ -78,6 +86,7 @@ final class Workspace {
         let scale = defaults.double(forKey: "textScale")
         if scale > 0 { textScale = scale }
         airy = defaults.bool(forKey: "airy")
+        peekFolders = defaults.bool(forKey: "peekFolders")
         monoIcons = defaults.bool(forKey: "monoIcons")
         let savedWidth = defaults.double(forKey: "previewWidth")
         if savedWidth > 0 { previewWidth = min(max(CGFloat(savedWidth), 220), 560) }

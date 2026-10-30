@@ -121,6 +121,7 @@ struct OptionsMenu: View {
             Divider()
             Toggle("Theme-colored icons", isOn: Binding(get: { ws.monoIcons }, set: { ws.monoIcons = $0 }))
             Toggle("Airy density", isOn: Binding(get: { ws.airy }, set: { ws.airy = $0 }))
+            Toggle("Peek into folders", isOn: Binding(get: { ws.peekFolders }, set: { ws.peekFolders = $0 }))
             Toggle("Sidebar", isOn: Binding(get: { ws.showSidebar }, set: { ws.showSidebar = $0 }))
             Toggle("Hide Pinned when empty", isOn: Binding(get: { ws.hidePinnedWhenEmpty }, set: { ws.hidePinnedWhenEmpty = $0 }))
             Divider()

@@ -39,8 +39,10 @@ Notes for AI agents working on Seam, a keyboard-first, Miller-column file manage
   shortcuts are avoided (the user runs Aerospace). Letters are matched by physical key code (`letterByKeyCode`), so
   vim keys work on non-Latin layouts. When you add or change a binding, update the shortcuts overlay
   (`ShortcutsOverlay` in `Overlays.swift`), the README and any context-menu hint.
-- **Column invariant:** the focused column's selected folder always has a column right after it
-  (`columns.count == focus + 2`). `select()` truncates/appends columns; `stepLeft` closes only the trailing one.
+- **Column invariant:** with "Peek into folders" on (`Workspace.peekFolders`, default off), the focused column's
+  selected folder has a column right after it (`columns.count == focus + 2`). With it off the focused column is the
+  last one (`focus + 1`) and `stepRight` opens the child. `select()` truncates/appends columns, `stepLeft` closes only
+  the trailing one, and `syncChildColumn()` reconciles when the setting flips.
 - **Paths:** compare paths through `URL.realURL` (`realpath`). Foundation's `resolvingSymlinksInPath` and
   `standardizedFileURL` strip `/private`, the opposite of what `contentsOfDirectory` returns, so `/var`, `/tmp` and
   `/etc` selections stop matching.

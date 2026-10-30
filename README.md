@@ -47,6 +47,8 @@ Pin a folder to keep it at the top of the sidebar.
 
 ![Keyboard shortcuts overlay](docs/shortcuts.png)
 
+Options menu > **Peek into folders** (off by default) shows the selected folder's contents in the next column straight away. With it off, a folder opens when you navigate into it (`l`, → or ⌘↓).
+
 Custom themes: drop a TOML file in `~/Library/Application Support/Seam/themes/` (see Theme menu > Save Current Theme).
 
 ## Not yet done

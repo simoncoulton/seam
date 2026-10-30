@@ -43,6 +43,8 @@ final class BrowserState: Identifiable {
     private var historyIndex = -1
     private var watchers: [UUID: DirWatcher] = [:]
     private var peekTask: Task<Void, Never>?
+    /// Mirrors `Workspace.peekFolders`, read from defaults so tabs created before the setting loads agree with it.
+    private var peeksChildren: Bool { UserDefaults.standard.bool(forKey: "peekFolders") }
 
     init(start: URL) { go(start) }
 
@@ -187,7 +189,7 @@ final class BrowserState: Identifiable {
         focus = i
         peek = nil
         let item = columns[i].shown.first { $0.url == url }
-        let wantsColumn = item?.isBrowsable == true
+        let wantsColumn = item?.isBrowsable == true && peeksChildren
         if columns.count > i + 1 {
             if wantsColumn, columns[i + 1].dir == url {
                 if columns.count > i + 2 { columns.removeSubrange((i + 2)...) }
@@ -201,6 +203,13 @@ final class BrowserState: Identifiable {
             reload(columns.count - 1)
         }
         syncWatchers()
+    }
+
+    /// Opens or closes the column beside the focused one after the peek setting changes.
+    func syncChildColumn() {
+        guard columns.indices.contains(focus) else { return }
+        if let sel = columns[focus].selected { select(sel, inColumn: focus) }
+        else if columns.count > focus + 1 { columns.removeSubrange((focus + 1)...); syncWatchers() }
     }
 
     func move(_ delta: Int) {
@@ -246,12 +255,13 @@ final class BrowserState: Identifiable {
         }
     }
 
-    /// Moving back closes the trailing column; the column for the newly focused column's selected
-    /// folder stays, as it does when moving up and down.
+    /// Moving back closes the trailing column. With peeking on, the column for the newly focused column's
+    /// selected folder stays, as it does when moving up and down.
     private func stepLeft() {
         guard focus > 0 else { return }
         focus -= 1
-        if columns.count > focus + 2 { columns.removeSubrange((focus + 2)...) }
+        let keep = focus + (peeksChildren ? 2 : 1)
+        if columns.count > keep { columns.removeSubrange(keep...) }
         peek = nil
         syncWatchers()
     }

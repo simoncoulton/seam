@@ -330,6 +330,38 @@ struct FileRow: View {
     }
 }
 
+/// Sets the starting selection of a just-focused text field. AppKit selects everything when the field editor
+/// takes over, and when that happens varies, so retry a few times, and stop once the text has been edited.
+private struct InitialSelection: NSViewRepresentable {
+    let text: String
+    let length: Int
+
+    func makeNSView(context: Context) -> NSView { Anchor(text: text, length: length) }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    final class Anchor: NSView {
+        let text: String
+        let length: Int
+        init(text: String, length: Int) {
+            self.text = text
+            self.length = length
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            guard window != nil else { return }
+            for delay in [0, 0.03, 0.08, 0.2] { DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.apply() } }
+        }
+
+        private func apply() {
+            guard let tv = window?.firstResponder as? NSTextView, tv.string == text else { return }
+            let range = NSRange(location: 0, length: length)
+            if tv.selectedRange() != range { tv.setSelectedRange(range) }
+        }
+    }
+}
+
 struct RenameField: View {
     @StateObject private var box: Local<String>
     @FocusState private var focused: Bool
@@ -337,8 +369,10 @@ struct RenameField: View {
 
     /// Length (UTF-16) of the part of the name that starts selected: everything but the extension.
     private let selectionLength: Int
+    private let initial: String
 
     init(initial: String, selectsStem: Bool) {
+        self.initial = initial
         _box = StateObject(wrappedValue: Local(initial))
         let name = initial as NSString
         let ext = name.pathExtension as NSString
@@ -352,13 +386,8 @@ struct RenameField: View {
             .padding(.horizontal, 4)
             .background(ws.theme.bg, in: RoundedRectangle(cornerRadius: 4))
             .onSubmit { ws.commitRename(box.value) }
-            .onAppear {
-                focused = true
-                DispatchQueue.main.async {
-                    (NSApp.keyWindow?.firstResponder as? NSTextView)?
-                        .setSelectedRange(NSRange(location: 0, length: selectionLength))
-                }
-            }
+            .background(InitialSelection(text: initial, length: selectionLength))
+            .onAppear { focused = true }
             .onChange(of: focused) { _, f in if !f, ws.tab.renaming != nil { ws.commitRename(box.value) } }
             .onDisappear {
                 // A reload can rebuild the row under the field; don't leave rename mode (which swallows keys) stuck.
