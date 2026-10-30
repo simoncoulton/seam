@@ -11,6 +11,8 @@ struct SeamApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1280, height: 780)
+        // Without this SwiftUI answers an open-folder event by closing the window and building a new one.
+        .handlesExternalEvents(matching: [])
         .commands { SeamCommands() }
     }
 }
@@ -18,7 +20,6 @@ struct SeamApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
         MainActor.assumeIsolated { Workspace.shared.installMonitor() }
     }
 
@@ -33,7 +34,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if i == 0, Date().timeIntervalSince(launchedAt) < 3, ws.tabs.count == 1 { ws.tab.go(url) }
                 else { ws.newTab(at: url) }
             }
-            NSApp.activate(ignoringOtherApps: true)
+            // Launchers hand focus back to the previous app while they close, so only step in if we aren't frontmost.
+            if !NSApp.isActive { NSRunningApplication.current.activate(options: [.activateAllWindows]) }
             NSApp.windows.first?.makeKeyAndOrderFront(nil)
         }
     }
