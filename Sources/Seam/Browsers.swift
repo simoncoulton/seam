@@ -278,7 +278,7 @@ struct FileRow: View {
         HStack(spacing: 8) {
             FileIcon(item: item, size: ws.fontSize + 3)
             if tab.renaming == item.url {
-                RenameField(initial: item.name)
+                RenameField(initial: item.name, selectsStem: !item.isDirectory || item.isPackage)
             } else {
                 Text(item.name).lineLimit(1).truncationMode(.middle)
                     .foregroundStyle(item.isHidden ? theme.dim : theme.fg)
@@ -305,7 +305,7 @@ struct FileRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             if NSEvent.modifierFlags.contains(.command) {
-                if tab.marks.contains(item.url) { tab.marks.remove(item.url) } else { tab.marks.insert(item.url) }
+                tab.toggleMark(item.url)
             } else {
                 tab.select(item.url, inColumn: columnIndex)
             }
@@ -335,7 +335,15 @@ struct RenameField: View {
     @FocusState private var focused: Bool
     private let ws = Workspace.shared
 
-    init(initial: String) { _box = StateObject(wrappedValue: Local(initial)) }
+    /// Length (UTF-16) of the part of the name that starts selected: everything but the extension.
+    private let selectionLength: Int
+
+    init(initial: String, selectsStem: Bool) {
+        _box = StateObject(wrappedValue: Local(initial))
+        let name = initial as NSString
+        let ext = name.pathExtension as NSString
+        selectionLength = selectsStem && ext.length > 0 ? name.length - ext.length - 1 : name.length
+    }
 
     var body: some View {
         TextField("", text: $box.value)
@@ -347,10 +355,15 @@ struct RenameField: View {
             .onAppear {
                 focused = true
                 DispatchQueue.main.async {
-                    (NSApp.keyWindow?.firstResponder as? NSTextView)?.selectAll(nil)
+                    (NSApp.keyWindow?.firstResponder as? NSTextView)?
+                        .setSelectedRange(NSRange(location: 0, length: selectionLength))
                 }
             }
             .onChange(of: focused) { _, f in if !f, ws.tab.renaming != nil { ws.commitRename(box.value) } }
+            .onDisappear {
+                // A reload can rebuild the row under the field; don't leave rename mode (which swallows keys) stuck.
+                if ws.tab.renaming != nil { ws.cancelRename() }
+            }
     }
 }
 
@@ -361,7 +374,7 @@ struct ContextMenuItems: View {
     /// Shortcuts are shown beside the entries. The key monitor handles the keys before the menu does.
     var body: some View {
         if let item {
-            Button("Open") { ws.tab.openSelected() }.keyboardShortcut("o")
+            Button("Open") { ws.tab.openSelected() }.keyboardShortcut(.downArrow)
             if item.isCloudOnly { Button("Download Now") { ws.download(item) } }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
             Divider()

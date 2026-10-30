@@ -13,6 +13,7 @@ struct OverlayHost: View {
                     case .search: SearchOverlay()
                     case .location: LocationOverlay()
                     case .shortcuts: ShortcutsOverlay()
+                    case .preview: PreviewPane(item: ws.tab.currentItem, large: true).frame(width: 720, height: 540)
                     }
                 }
                 .background(ws.theme.panel, in: RoundedRectangle(cornerRadius: 12))
@@ -173,11 +174,11 @@ struct ShortcutsOverlay: View {
             ("gg  G  5G", "First / last / row 5"), ("⌃D  ⌃U", "Half page down / up"),
             ("⌃F  ⌃B", "Page down / up"), ("⌃O  Tab", "History back / forward"),
             ("gh  g/", "Home / root"), ("gt  gT", "Next / previous tab"),
-            ("⌃K", "Fuzzy search"), ("⌃L  :", "Go to location"), ("Tab", "Complete path (in ⌃L)"),
+            ("⌘F", "Fuzzy search"), ("⌘O  :", "Go to location"), ("Tab", "Complete path (in ⌘O)"),
             ("/", "Filter column"),
         ]),
         ("Files", [
-            ("Space", "Toggle preview"), ("Return  r  F2", "Rename"), ("m", "Mark item"),
+            ("Space", "Toggle preview"), ("⇧Space", "Preview in a popup (j k move, Space closes)"), ("Return  r  F2", "Rename"), ("m", "Mark item"), ("⇧M", "Mark range"),
             ("y  ⌘C", "Copy"), ("⌘X", "Cut"), ("p  ⌘V", "Paste"), ("⌘⌫", "Move to Trash"), ("⇧⌘⌫", "Delete permanently"), ("⌘Z", "Undo last"),
             ("⌘N", "New file"), ("⇧⌘N", "New folder"), ("⇧⌘C", "Copy path"), ("⇧⌘R", "AirDrop selection"), ("t", "Open Terminal here"),
         ]),

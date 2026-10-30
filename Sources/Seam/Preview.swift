@@ -15,12 +15,13 @@ enum Thumbnails {
 
 struct PreviewPane: View {
     let item: FileItem?
+    var large = false
     private let ws = Workspace.shared
 
     var body: some View {
         Group {
             if let item {
-                PreviewContent(item: item).id(item.url)
+                PreviewContent(item: item, large: large).id(item.url)
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "doc.viewfinder").font(.system(size: 30))
@@ -30,12 +31,13 @@ struct PreviewPane: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(ws.theme.panel.opacity(0.4))
+        .background(ws.theme.panel.opacity(large ? 1 : 0.4))
     }
 }
 
 private struct PreviewContent: View {
     let item: FileItem
+    let large: Bool
     private let ws = Workspace.shared
     @StateObject private var imageBox = Local<NSImage?>(nil)
     @StateObject private var textBox = Local<String?>(nil)
@@ -50,7 +52,7 @@ private struct PreviewContent: View {
                 Spacer().frame(height: 30)
                 if let image {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: 280)
+                        .frame(maxWidth: .infinity, maxHeight: large ? 340 : 280)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
                 } else if text == nil {

@@ -56,8 +56,8 @@ struct SeamCommands: Commands {
             Button("Forward") { Workspace.shared.tab.forward() }
             Button("Enclosing Folder") { Workspace.shared.tab.goUp() }
             Divider()
-            Button("Search…") { Workspace.shared.openSearch() }.keyboardShortcut("k", modifiers: .control)
-            Button("Go to Location…") { Workspace.shared.openLocation() }.keyboardShortcut("l", modifiers: .control)
+            Button("Search…") { Workspace.shared.openSearch() }.keyboardShortcut("f")
+            Button("Go to Location…") { Workspace.shared.openLocation() }.keyboardShortcut("o")
             Button("Keyboard Shortcuts") { Workspace.shared.overlay = .shortcuts }
         }
         CommandMenu("Theme") {

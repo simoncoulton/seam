@@ -3,7 +3,7 @@ import NetFS
 import Observation
 import SwiftUI
 
-enum Overlay { case search, location, shortcuts }
+enum Overlay { case search, location, shortcuts, preview }
 
 struct SidebarPlace: Identifiable, Hashable, Codable {
     var name: String
@@ -513,16 +513,36 @@ final class Workspace {
         tab.renaming = item.url
     }
 
+    /// Drops the rename field and its text editor, so keys reach `handle(_:)` again.
+    func cancelRename() {
+        tab.renaming = nil
+        NSApp.keyWindow?.makeFirstResponder(nil)
+    }
+
     func commitRename(_ newName: String) {
         guard let url = tab.renaming else { return }
-        tab.renaming = nil
+        cancelRename()
         let name = newName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, name != url.lastPathComponent, !name.contains("/") else { return }
-        let dest = url.deletingLastPathComponent().appendingPathComponent(name)
+        let dest = url.deletingLastPathComponent().appendingPathComponent(name, isDirectory: url.hasDirectoryPath)
         do {
             try FileManager.default.moveItem(at: url, to: dest)
             pushUndo("rename") { try? FileManager.default.moveItem(at: dest, to: url) }
-            tab.reload(tab.focus) { [tab] in tab.select(dest, inColumn: tab.focus) }
+            // Point the selection (and the folder column beside it) at the new path before reloading. Otherwise the
+            // reload sees a missing selection, jumps to the first row, and the child column is torn down and rebuilt.
+            let col = tab.focus
+            if tab.columns.indices.contains(col), tab.columns[col].selected == url {
+                tab.columns[col].selected = dest
+                if tab.columns.indices.contains(col + 1), tab.columns[col + 1].dir == url {
+                    tab.columns[col + 1].dir = dest
+                    tab.reload(col + 1)
+                }
+            }
+            tab.reload(col) { [tab] in
+                guard tab.columns.indices.contains(col),
+                      let item = tab.columns[col].shown.first(where: { $0.name == name }) else { return }
+                tab.select(item.url, inColumn: col)
+            }
         } catch { toast(error.localizedDescription) }
     }
 
@@ -530,9 +550,18 @@ final class Workspace {
         let url = tab.currentDir.appendingPathComponent("untitled").uniqueSibling(suffix: " ")
         guard FileManager.default.createFile(atPath: url.path, contents: nil) else { toast("Couldn't create a file here"); return }
         pushUndo("new file") { try? FileManager.default.removeItem(at: url) }
+        revealAndRename(url)
+    }
+
+    /// Reloads the focused column, selects the new item and starts renaming it. The row is matched by name
+    /// because the loader's URL for it can differ from ours (trailing slash on folders, `/private` prefix).
+    private func revealAndRename(_ url: URL) {
+        let name = url.lastPathComponent
         tab.reload(tab.focus) { [tab] in
-            tab.select(url, inColumn: tab.focus)
-            tab.renaming = url
+            let col = tab.focus
+            guard let item = tab.columns[col].shown.first(where: { $0.name == name }) else { return }
+            tab.select(item.url, inColumn: col)
+            tab.renaming = item.url
         }
     }
 
@@ -542,10 +571,7 @@ final class Workspace {
         do {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
             pushUndo("new folder") { try? FileManager.default.removeItem(at: url) }
-            tab.reload(tab.focus) { [tab] in
-                tab.select(url, inColumn: tab.focus)
-                tab.renaming = url
-            }
+            revealAndRename(url)
         } catch { toast(error.localizedDescription) }
     }
 
@@ -642,6 +668,12 @@ final class Workspace {
         // Overlays own the keyboard.
         if let o = overlay {
             if code == 53 || (o == .shortcuts && (code == 122 || chars == "?")) { overlay = nil; return true }
+            if o == .preview {
+                if code == 49 || letter == "q" { overlay = nil; return true }
+                if code == 125 || letter == "j" { tab.move(1); return true }
+                if code == 126 || letter == "k" { tab.move(-1); return true }
+                return true
+            }
             if o == .search {
                 if code == 125 || (ctrl && (letter == "n" || letter == "j")) { search.move(1); return true }
                 if code == 126 || (ctrl && (letter == "p" || letter == "k")) { search.move(-1); return true }
@@ -660,7 +692,7 @@ final class Workspace {
         }
 
         if renamingPlace != nil { if code == 53 { renamingPlace = nil; return true }; return false }
-        if tab.renaming != nil { if code == 53 { tab.renaming = nil; return true }; return false }
+        if tab.renaming != nil { if code == 53 { cancelRename(); return true }; return false }
         if tab.filtering != nil {
             if code == 53 { tab.clearFilter(); return true }
             if code == 36 { tab.endFilter(); return true }
@@ -671,8 +703,8 @@ final class Workspace {
             return false
         }
 
-        if ctrl && letter == "k" { openSearch(); return true }
-        if ctrl && letter == "l" { openLocation(); return true }
+        if cmd && !shift && letter == "f" { openSearch(); return true }
+        if cmd && !shift && letter == "o" { openLocation(); return true }
         if code == 122 || (chars == "?" && !cmd) { overlay = .shortcuts; return true }
 
         if cmd {
@@ -687,7 +719,6 @@ final class Workspace {
             case ("n", _): newFile()
             case ("c", _) where shift: copyPath()
             case ("r", _) where !shift: tab.reloadAll()
-            case ("o", _): tab.openSelected()
             case (_, 51) where shift: deletePermanently()
             case (_, 51): trash()
             case (_, 33): if shift { cycleTab(-1) } else { tab.back() }
@@ -755,8 +786,10 @@ final class Workspace {
         case ("g", _): if counted { tab.jump(toIndex: count - 1) } else { tab.jump(toLast: true) }
         case (_, 48): tab.forward()
         case (_, 41) where shift: openLocation()
+        case (_, 49) where shift: overlay = .preview
         case (_, 49): showPreview.toggle()
         case (_, 120), ("r", _): beginRename()
+        case ("m", _) where shift: tab.markRange()
         case ("m", _): tab.toggleMark()
         case ("y", _): copy(cut: false)
         case ("p", _): paste()

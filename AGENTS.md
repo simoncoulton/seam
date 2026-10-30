@@ -65,7 +65,7 @@ Notes for AI agents working on Seam, a keyboard-first, Miller-column file manage
   separate direction button. Hidden files are shown by default.
 - `y`/⌘C copy, `p`/⌘V paste; **`p` no longer pins**. ⌘⌫ moves to Trash, ⇧⌘⌫ deletes permanently after a
   confirmation alert. Return renames (`l`/→ opens). ⌘N new file, ⇧⌘N new folder. ⌘-click marks a row.
-- Cmd+L and Cmd+D are not used (Aerospace); location is Ctrl+L or `:`, search is Ctrl+K.
+- Cmd+L and Cmd+D are not used (Aerospace); location is Cmd+O or `:`, search is Cmd+F (they replaced Ctrl+L/K; Cmd+O no longer opens items, use `l`, → or ⌘↓).
 - Vim navigation everywhere: counts, `gg`/`G`, `gh`, `gt`/`gT`, Ctrl-D/U/F/B/O, `-`, Tab.
 - Selected row takes the theme colour with a border only in the focused column. Moving left removes a column.
 - `smb://server` with no share must list shares (`smbutil view -N`), falling back to the macOS login UI.

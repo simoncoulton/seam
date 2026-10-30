@@ -29,6 +29,8 @@ final class BrowserState: Identifiable {
     }
     var foldersFirst = true
     var marks: Set<URL> = []
+    /// The row last marked by hand; Shift+M marks everything between it and the current row.
+    var markAnchor: URL?
     var renaming: URL?
     var filtering: UUID?
     /// Columns whose filter bar is open (opened with `/`, closed with Esc).
@@ -263,8 +265,25 @@ final class BrowserState: Identifiable {
 
     func toggleMark() {
         guard let item = currentItem else { return }
-        if marks.contains(item.url) { marks.remove(item.url) } else { marks.insert(item.url) }
+        toggleMark(item.url)
         move(1)
+    }
+
+    func toggleMark(_ url: URL) {
+        if marks.contains(url) { marks.remove(url) } else { marks.insert(url); markAnchor = url }
+    }
+
+    /// Marks every row from the anchor (or the nearest marked row above or below) to the current one.
+    func markRange() {
+        let list = shown
+        guard let cur = columns[focus].selected.flatMap({ s in list.firstIndex { $0.url == s } }) else { return }
+        var from = markAnchor.flatMap { a in list.firstIndex { $0.url == a } }
+        if from == nil {
+            let marked = list.indices.filter { marks.contains(list[$0].url) }
+            from = marked.min { abs($0 - cur) < abs($1 - cur) }
+        }
+        for i in min(from ?? cur, cur)...max(from ?? cur, cur) { marks.insert(list[i].url) }
+        markAnchor = list[cur].url
     }
 
     // MARK: Filter
