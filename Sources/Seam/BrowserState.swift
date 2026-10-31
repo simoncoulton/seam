@@ -78,16 +78,8 @@ final class BrowserState: Identifiable {
         guard FileManager.default.fileExists(atPath: dir.path, isDirectory: &isDir) else { return }
         if !isDir.boolValue { pick = dir; dir = dir.deletingLastPathComponent() }
 
-        var chain: [URL] = []
-        var cur = dir
-        while true {
-            chain.insert(cur, at: 0)
-            if cur.path == "/" { break }
-            cur = cur.deletingLastPathComponent()
-        }
-        columns = chain.enumerated().map { i, d in
-            Column(dir: d, selected: i + 1 < chain.count ? chain[i + 1] : pick)
-        }
+        // Start at the folder itself; stepping left from the first column adds its parent on demand.
+        columns = [Column(dir: dir, selected: pick)]
         focus = columns.count - 1
         marks = []
         renaming = nil
@@ -267,8 +259,15 @@ final class BrowserState: Identifiable {
     /// Moving back closes the trailing column. With peeking on, the column for the newly focused column's
     /// selected folder stays, as it does when moving up and down.
     private func stepLeft() {
-        guard focus > 0 else { return }
-        focus -= 1
+        if focus == 0 {
+            let dir = columns[0].dir
+            let parent = dir.deletingLastPathComponent()
+            guard dir.path != "/", parent.path != dir.path else { return }
+            columns.insert(Column(dir: parent, selected: dir), at: 0)
+            reload(0)
+        } else {
+            focus -= 1
+        }
         let keep = focus + (peeksChildren ? 2 : 1)
         if columns.count > keep { columns.removeSubrange(keep...) }
         peek = nil
