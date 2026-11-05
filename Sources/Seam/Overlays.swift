@@ -179,7 +179,7 @@ struct ShortcutsOverlay: View {
             ("/", "Filter column"),
         ]),
         ("Files", [
-            ("Space", "Toggle preview"), ("⇧Space", "Preview in a popup (j k move, Space closes)"), ("Return  r  F2", "Rename"), ("m", "Mark item"), ("⇧M", "Mark range"),
+            ("Space", "Toggle preview"), ("⇧Space", "Preview in a popup (j k move, Space closes)"), ("v", "Play or pause the previewed video (popup: also Return, h l seek 5s)"), ("Return  r  F2", "Rename"), ("m", "Mark item"), ("⇧M", "Mark range"),
             ("y  ⌘C", "Copy"), ("⌘X", "Cut"), ("p  ⌘V", "Paste"), ("⌘⌫", "Move to Trash"), ("⇧⌘⌫", "Delete permanently"), ("⌘Z", "Undo last"),
             ("⌘N", "New file"), ("⇧⌘N", "New folder"), ("⇧⌘C", "Copy path"), ("⇧⌘R", "AirDrop selection"), ("t", "Open Terminal here"),
         ]),

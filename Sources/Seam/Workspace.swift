@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import NetFS
 import Observation
 import SwiftUI
@@ -12,6 +13,13 @@ struct SidebarPlace: Identifiable, Hashable, Codable {
     var id: URL { url }
 }
 
+struct TransferStatus: Equatable {
+    var title: String
+    var detail: String
+    /// nil while the work can't be measured yet.
+    var fraction: Double?
+}
+
 /// App-wide state: tabs, theme, overlays, clipboard, undo.
 @MainActor @Observable
 final class Workspace {
@@ -22,6 +30,8 @@ final class Workspace {
     var overlay: Overlay? { didSet { if oldValue == .search, overlay != .search { search.stop() } } }
     var locationText = ""
     var toastText: String?
+    /// Set once a background copy has run long enough to show; drives the progress pill.
+    var transferStatus: TransferStatus?
     var volumes: [SidebarPlace] = []
     /// Dropbox, OneDrive (including shared libraries), Google Drive and iCloud Drive, as Finder lists them.
     var cloud: [SidebarPlace] = []
@@ -64,7 +74,14 @@ final class Workspace {
     var textScale = 1.0 { didSet { SettingsStore.update { $0.textScale = textScale } } }
     var airy = false { didSet { SettingsStore.update { $0.airy = airy } } }
 
-    private var clipboard: (urls: [URL], cut: Bool)?
+    private var transferProgress: TransferProgress?
+    /// Players alive in the preview pane and popup. The newest one (the popup, if open) takes the playback keys.
+    @ObservationIgnored private var players: [AVPlayer] = []
+    /// Files this app copied or cut. Dropped as soon as something else takes over the system pasteboard.
+    private(set) var clipboard: (urls: [URL], cut: Bool)?
+    private var clipboardSeen = -1
+    private var ownChange = -1
+    private var clipboardWatch: Task<Void, Never>?
     private var undoStack: [(label: String, run: () -> Void)] = []
     private var toastTask: Task<Void, Never>?
     private var monitor: Any?
@@ -422,46 +439,147 @@ final class Workspace {
     func copy(cut: Bool) {
         let urls = tab.targets()
         guard !urls.isEmpty else { return }
-        clipboard = (urls, cut)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.writeObjects(urls as [NSURL])
+        ownChange = NSPasteboard.general.changeCount
+        clipboardSeen = ownChange
+        clipboard = (urls, cut)
         toast(cut ? "Cut \(urls.count) item(s)" : "Copied \(urls.count) item(s)")
     }
 
+    /// Mirrors file URLs on the system pasteboard, whoever put them there (Finder included). Only our own cuts are
+    /// known to be moves. Anything else on the pasteboard, such as text, clears it.
+    func syncClipboard() {
+        let count = NSPasteboard.general.changeCount
+        guard count != clipboardSeen else { return }
+        clipboardSeen = count
+        if count == ownChange { return }
+        let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        clipboard = urls.flatMap { $0.isEmpty ? nil : ($0, false) }
+    }
+
+    /// The pasteboard has no change notification, so poll its change count.
+    func watchClipboard() {
+        guard clipboardWatch == nil else { return }
+        syncClipboard()
+        clipboardWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(400))
+                self?.syncClipboard()
+            }
+        }
+    }
+
+    func clearClipboard() {
+        NSPasteboard.general.clearContents()
+        syncClipboard()
+    }
+
     func paste() {
-        let dir = tab.currentDir
-        let source: (urls: [URL], cut: Bool)
-        if let c = clipboard { source = c }
-        else if let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            source = (urls, false)
-        } else { return }
-        transfer(source.urls, into: dir, move: source.cut)
+        syncClipboard()
+        guard let source = clipboard else { return }
+        transfer(source.urls, into: tab.currentDir, move: source.cut)
         if source.cut { clipboard = nil }
     }
 
+    /// Same-volume moves are renames, so they happen inline. Everything else copies on a background thread with
+    /// progress (and Esc to cancel).
     func transfer(_ urls: [URL], into dir: URL, move: Bool) {
+        guard transferProgress == nil else { toast("A transfer is already running"); return }
         let fm = FileManager.default
-        var pairs: [(from: URL, to: URL)] = []
+        func volume(_ u: URL) -> NSObjectProtocol? { try? u.resourceValues(forKeys: [.volumeIdentifierKey]).volumeIdentifier }
+        let target = volume(dir)
+        var renamed: [(from: URL, to: URL)] = []
+        var slow: [URL] = []
         for src in urls {
-            var dest = dir.appendingPathComponent(src.lastPathComponent)
             if src.deletingLastPathComponent().standardizedFileURL == dir.standardizedFileURL, move { continue }
-            if src.standardizedFileURL == dest.standardizedFileURL || fm.fileExists(atPath: dest.path) {
-                dest = dest.uniqueSibling()
-            }
+            guard move, let a = volume(src), let b = target, a.isEqual(b) else { slow.append(src); continue }
+            var dest = dir.appendingPathComponent(src.lastPathComponent)
+            if fm.fileExists(atPath: dest.path) { dest = dest.uniqueSibling() }
             do {
-                if move { try fm.moveItem(at: src, to: dest) } else { try fm.copyItem(at: src, to: dest) }
-                pairs.append((src, dest))
+                try fm.moveItem(at: src, to: dest)
+                renamed.append((src, dest))
             } catch { toast(error.localizedDescription) }
         }
-        guard !pairs.isEmpty else { return }
-        if move {
-            pushUndo("move") { for p in pairs { try? fm.moveItem(at: p.to, to: p.from) } }
-        } else {
-            pushUndo("copy") { for p in pairs { try? fm.trashItem(at: p.to, resultingItemURL: nil) } }
+        if !renamed.isEmpty {
+            pushUndo("move") { for p in renamed { try? fm.moveItem(at: p.to, to: p.from) } }
         }
-        tab.marks = []
-        tab.reloadAll()
+        guard !slow.isEmpty else {
+            if !renamed.isEmpty { tab.marks = []; tab.reloadAll() }
+            return
+        }
+
+        let progress = TransferProgress()
+        transferProgress = progress
+        let verb = move ? "move" : "copy"
+        let items = slow.count
+        // Small jobs finish before this fires, so they never flash a progress pill.
+        let poller = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            while !Task.isCancelled {
+                guard let self else { return }
+                let total = progress.total
+                if total < 0 {
+                    self.transferStatus = TransferStatus(title: "Preparing to \(verb)…", detail: "Esc to cancel", fraction: nil)
+                } else {
+                    let done = progress.done
+                    self.transferStatus = TransferStatus(
+                        title: "\(move ? "Moving" : "Copying") \(progress.item) of \(items)",
+                        detail: "\(Format.size(done)) of \(Format.size(total)) · Esc to cancel",
+                        fraction: total > 0 ? min(Double(done) / Double(total), 1) : nil)
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
+        Task { @MainActor in
+            let result = await Task.detached(priority: .userInitiated) {
+                Copier.run(slow, into: dir, move: move, progress: progress)
+            }.value
+            poller.cancel()
+            transferStatus = nil
+            transferProgress = nil
+            let pairs = result.pairs
+            if !pairs.isEmpty {
+                if move {
+                    pushUndo("move") { for p in pairs { try? fm.moveItem(at: p.to, to: p.from) } }
+                } else {
+                    pushUndo("copy") { for p in pairs { try? fm.trashItem(at: p.to, resultingItemURL: nil) } }
+                }
+            }
+            tab.marks = []
+            tab.reloadAll()
+            let done = "\(move ? "Moved" : "Copied") \(pairs.count) of \(items) item(s)"
+            if result.cancelled { toast("Cancelled. \(done)") }
+            else if let err = result.errors.first {
+                toast(result.errors.count > 1 ? "\(err) (+\(result.errors.count - 1) more)" : err)
+            } else { toast(done) }
+        }
     }
+
+    func registerPlayer(_ p: AVPlayer, autoplay: Bool) {
+        players.forEach { $0.pause() }
+        players.append(p)
+        if autoplay { p.play() }
+    }
+
+    func unregisterPlayer(_ p: AVPlayer) {
+        p.pause()
+        players.removeAll { $0 === p }
+    }
+
+    func togglePlayback() {
+        guard let p = players.last else { return }
+        if p.timeControlStatus != .paused { p.pause(); return }
+        if let d = p.currentItem?.duration, d.isNumeric, p.currentTime() >= d { p.seek(to: .zero) }
+        p.play()
+    }
+
+    func seekPlayback(by seconds: Double) {
+        guard let p = players.last else { return }
+        p.seek(to: CMTime(seconds: max(0, p.currentTime().seconds + seconds), preferredTimescale: 600))
+    }
+
+    func cancelTransfer() { transferProgress?.cancel() }
 
     func trash() {
         let urls = tab.targets()
@@ -655,6 +773,7 @@ final class Workspace {
     // MARK: Keyboard
 
     func installMonitor() {
+        watchClipboard()
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             MainActor.assumeIsolated { Workspace.shared.handle(event) ? nil : event }
@@ -687,6 +806,9 @@ final class Workspace {
                 if code == 49 || letter == "q" { overlay = nil; return true }
                 if code == 125 || letter == "j" { tab.move(1); return true }
                 if code == 126 || letter == "k" { tab.move(-1); return true }
+                if code == 36 || letter == "v" { togglePlayback(); return true }
+                if code == 123 || letter == "h" { seekPlayback(by: -5); return true }
+                if code == 124 || letter == "l" { seekPlayback(by: 5); return true }
                 return true
             }
             if o == .search {
@@ -808,11 +930,13 @@ final class Workspace {
         case ("m", _): tab.toggleMark()
         case ("y", _): copy(cut: false)
         case ("p", _): paste()
+        case ("v", _): togglePlayback()
         case ("t", _): openTerminal()
         case (_, 44) where !shift: tab.beginFilter()
         case (_, 47): tab.showHidden.toggle()
         case (_, 53):
-            if tab.hasFilter { tab.clearFilter() } else { tab.marks = [] }
+            if transferProgress != nil { cancelTransfer() }
+            else if tab.hasFilter { tab.clearFilter() } else { tab.marks = [] }
         default: return false
         }
         return true

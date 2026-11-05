@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import ImageIO
 import QuickLookThumbnailing
 import SwiftUI
@@ -10,6 +11,23 @@ enum Thumbnails {
         let req = QLThumbnailGenerator.Request(fileAt: url, size: size, scale: scale, representationTypes: .all)
         guard let rep = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: req) else { return nil }
         return rep.nsImage
+    }
+}
+
+/// AVKit's inline player. The keys are handled by `Workspace.handle`, which sees them before this view does.
+private struct PlayerView: NSViewRepresentable {
+    let player: AVPlayer
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let v = AVPlayerView()
+        v.player = player
+        v.controlsStyle = .inline
+        v.showsFullScreenToggleButton = true
+        return v
+    }
+
+    func updateNSView(_ v: AVPlayerView, context: Context) {
+        if v.player !== player { v.player = player }
     }
 }
 
@@ -42,6 +60,7 @@ private struct PreviewContent: View {
     @StateObject private var imageBox = Local<NSImage?>(nil)
     @StateObject private var textBox = Local<String?>(nil)
     @StateObject private var metaBox = Local<[(String, String)]>([])
+    @StateObject private var playerBox = Local<(player: AVPlayer, hasVideo: Bool)?>(nil)
     private var image: NSImage? { imageBox.value }
     private var text: String? { textBox.value }
     private var meta: [(String, String)] { metaBox.value }
@@ -50,7 +69,12 @@ private struct PreviewContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Spacer().frame(height: 30)
-                if let image {
+                if let media = playerBox.value, media.hasVideo {
+                    PlayerView(player: media.player)
+                        .frame(maxWidth: .infinity).frame(height: large ? 340 : 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
+                } else if let image {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: large ? 340 : 280)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -58,6 +82,9 @@ private struct PreviewContent: View {
                 } else if text == nil {
                     FileIcon(item: item, size: 96)
                         .frame(maxWidth: .infinity)
+                }
+                if let media = playerBox.value, !media.hasVideo {
+                    PlayerView(player: media.player).frame(maxWidth: .infinity).frame(height: 44)
                 }
                 Text(item.name).font(.system(size: 14, weight: .semibold)).textSelection(.enabled)
                 VStack(alignment: .leading, spacing: 5) {
@@ -78,16 +105,23 @@ private struct PreviewContent: View {
                 }
                 if let text {
                     Divider().opacity(0.3)
-                    Text(text)
-                        .font(.system(size: 11, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if Self.markdownExtensions.contains(item.url.pathExtension.lowercased()) {
+                        MarkdownView(source: text, base: item.url.deletingLastPathComponent())
+                    } else {
+                        Text(text)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             .padding(16)
         }
         .task(id: item.isCloudOnly) { await load() }
+        .onDisappear { if let p = playerBox.value?.player { ws.unregisterPlayer(p) } }
     }
+
+    private static let markdownExtensions: Set<String> = ["md", "markdown", "mdown", "mkd"]
 
     private func load() async {
         let url = item.url
@@ -110,9 +144,20 @@ private struct PreviewContent: View {
         if type?.conforms(to: .image) == true || type?.identifier.contains("raw") == true {
             metaBox.value += Self.imageMeta(url)
         } else if type?.conforms(to: .audiovisualContent) == true {
-            if let dur = try? await AVURLAsset(url: url).load(.duration), dur.seconds.isFinite {
+            let asset = AVURLAsset(url: url)
+            if let dur = try? await asset.load(.duration), dur.seconds.isFinite {
                 let s = Int(dur.seconds)
                 metaBox.value.append(("Duration", String(format: "%d:%02d", s / 60, s % 60)))
+            }
+            // Formats AVFoundation can't decode (MKV, WebM, ...) keep the thumbnail.
+            if (try? await asset.load(.isPlayable)) == true {
+                let hasVideo = ((try? await asset.loadTracks(withMediaType: .video)) ?? []).isEmpty == false
+                // Selection moved on while loading: the view is gone, so don't start a player nobody can stop.
+                if Task.isCancelled { return }
+                let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+                playerBox.value = (player, hasVideo)
+                // The popup plays on open; the side pane waits for `v` or a click.
+                ws.registerPlayer(player, autoplay: large)
             }
         } else if type?.conforms(to: .pdf) != true {
             // Text reader: capped at 1 MiB, so big files never stall the pane.

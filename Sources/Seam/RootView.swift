@@ -29,6 +29,27 @@ struct RootView: View {
                 }
             }
             OverlayHost()
+            if let t = ws.transferStatus {
+                VStack {
+                    Spacer()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(t.title).font(.system(size: 12, weight: .semibold))
+                        if let f = t.fraction {
+                            ProgressView(value: f).progressViewStyle(.linear).tint(theme.tint)
+                        } else {
+                            ProgressView().progressViewStyle(.linear).tint(theme.tint)
+                        }
+                        Text(t.detail).font(.system(size: 11)).foregroundStyle(theme.dim)
+                    }
+                    .frame(width: 280, alignment: .leading)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(theme.panel, in: RoundedRectangle(cornerRadius: 12))
+                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.dim.opacity(0.25)))
+                    .padding(.bottom, 40)
+                }
+                .transition(.opacity)
+                .allowsHitTesting(false)
+            }
             if let toast = ws.toastText {
                 VStack {
                     Spacer()
@@ -47,6 +68,7 @@ struct RootView: View {
         .background { WindowBackdrop() }
         .preferredColorScheme(theme.isDark ? .dark : .light)
         .animation(.easeOut(duration: 0.15), value: ws.toastText)
+        .animation(.easeOut(duration: 0.15), value: ws.transferStatus == nil)
         .animation(.easeOut(duration: 0.12), value: ws.showPreview)
         .ignoresSafeArea()
     }
@@ -168,6 +190,7 @@ struct StatusBar: View {
     let tab: BrowserState
     private let ws = Workspace.shared
     @StateObject private var size = Local<DiskUsage?>(nil)
+    @StateObject private var list = Local<Bool>(false)
 
     /// What the footer measures: the marked items, otherwise the selected one.
     private var targets: [URL] {
@@ -184,6 +207,18 @@ struct StatusBar: View {
         HStack {
             Text("\(count) item\(count == 1 ? "" : "s")")
             if !tab.marks.isEmpty { Text("· \(tab.marks.count) marked").foregroundStyle(ws.theme.tint) }
+            if let clip = ws.clipboard {
+                let n = clip.urls.count
+                Button { list.value.toggle() } label: {
+                    Label("\(n) \(clip.cut ? "cut" : "copied") · p to paste", systemImage: clip.cut ? "scissors" : "doc.on.doc")
+                        .foregroundStyle(ws.theme.tint)
+                }
+                .buttonStyle(.plain)
+                .help("Show the files ready to paste")
+                .popover(isPresented: Binding(get: { list.value }, set: { list.value = $0 }), arrowEdge: .top) {
+                    ClipboardList(urls: clip.urls, cut: clip.cut)
+                }
+            }
             Spacer()
             if !ws.pendingKeys.isEmpty {
                 Text(ws.pendingKeys).font(.system(size: 11, design: .monospaced)).foregroundStyle(ws.theme.tint)
@@ -312,5 +347,43 @@ struct PreviewResizeHandle: View {
                     }
                     .onEnded { _ in startWidth.value = nil; hovering.value = false }
             )
+    }
+}
+
+/// The top-level items on the pasteboard. A copied folder is one row; its contents aren't listed.
+struct ClipboardList: View {
+    let urls: [URL]
+    let cut: Bool
+    private let ws = Workspace.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("\(urls.count) item\(urls.count == 1 ? "" : "s") \(cut ? "to move" : "copied")")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button("Clear") { ws.clearClipboard() }.buttonStyle(.plain).foregroundStyle(ws.theme.tint)
+            }
+            .padding(10)
+            Divider()
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(urls.enumerated()), id: \.offset) { _, url in
+                        HStack(spacing: 8) {
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 16, height: 16)
+                            Text(url.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                            Spacer(minLength: 12)
+                            Text((url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
+                                .foregroundStyle(ws.theme.dim).lineLimit(1).truncationMode(.head)
+                        }
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(maxHeight: 280)
+        }
+        .frame(width: 380)
     }
 }

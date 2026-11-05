@@ -14,7 +14,7 @@ Builds with the Command Line Tools alone (macOS 14+). `@State` is replaced by `L
 
 ## Keys
 
-Press `F1` or `?` in the app. Highlights: `Cmd+,` settings, `Cmd+O` go to location (Tab completes folders, or shares after `smb://server/`), `y` / `p` copy / paste (also ⌘C / ⌘V), drag sidebar rows to reorder, `h j k l` move, `l` open, `Return` rename, `Space` preview (`Shift+Space` for a popup), `Cmd+F` find files under the current folder (indexed only while it is open), `/` filter a column, `m` mark, `Shift+M` mark everything from the last mark to here, `r` rename too.
+Press `F1` or `?` in the app. Highlights: `Cmd+,` settings, `Cmd+O` go to location (Tab completes folders, or shares after `smb://server/`), `y` / `p` copy / paste (also ⌘C / ⌘V), drag sidebar rows to reorder, `h j k l` move, `l` open, `Return` rename, `Space` preview (`Shift+Space` for a popup), `v` play / pause a previewed video or audio file (in the popup it autoplays; `h` / `l` seek 5 s), `Cmd+F` find files under the current folder (indexed only while it is open), `/` filter a column, `m` mark, `Shift+M` mark everything from the last mark to here, `r` rename too.
 
 ### Find
 
