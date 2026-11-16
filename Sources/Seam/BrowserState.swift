@@ -278,7 +278,9 @@ final class BrowserState: Identifiable {
 
     func openSelected() {
         guard let item = currentItem else { return }
-        if item.isBrowsable { stepRight() } else { NSWorkspace.shared.open(item.url) }
+        if item.isBrowsable { stepRight() }
+        else if Workspace.archiveExtensions.contains(item.url.pathExtension.lowercased()) { Workspace.shared.extract() }
+        else { NSWorkspace.shared.open(item.url) }
     }
 
     func toggleMark() {

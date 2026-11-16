@@ -61,6 +61,8 @@ private struct PreviewContent: View {
     @StateObject private var textBox = Local<String?>(nil)
     @StateObject private var metaBox = Local<[(String, String)]>([])
     @StateObject private var playerBox = Local<(player: AVPlayer, hasVideo: Bool)?>(nil)
+    /// In the popup, media grows with the popup height (340 matches the original 540 pt popup).
+    private var mediaHeight: CGFloat { max(200, ws.popupHeight - 200) }
     private var image: NSImage? { imageBox.value }
     private var text: String? { textBox.value }
     private var meta: [(String, String)] { metaBox.value }
@@ -71,12 +73,12 @@ private struct PreviewContent: View {
                 Spacer().frame(height: 30)
                 if let media = playerBox.value, media.hasVideo {
                     PlayerView(player: media.player)
-                        .frame(maxWidth: .infinity).frame(height: large ? 340 : 200)
+                        .frame(maxWidth: .infinity).frame(height: large ? mediaHeight : 200)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
                 } else if let image {
                     Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: large ? 340 : 280)
+                        .frame(maxWidth: .infinity, maxHeight: large ? mediaHeight : 280)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
                 } else if text == nil {

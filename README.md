@@ -31,7 +31,9 @@ Press `F1` or `?` in the app. Highlights: `Cmd+,` settings, `Cmd+O` go to locati
 
 ### Filter, mark and pin
 
-`/` filters a single column, with sort tabs and a direction button.
+`/` filters a single column, with sort tabs and a direction button. Without leaving the keyboard: `Ctrl-N` / `Ctrl-P`
+change the sort and `Ctrl-R` reverses it while typing in the filter, and `s` / `Shift-S` do the same from normal mode.
+The sort is the same everywhere and is remembered across folders, tabs and launches.
 
 ![Filtering a column](docs/filter.png)
 

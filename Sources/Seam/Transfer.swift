@@ -32,7 +32,7 @@ struct TransferResult {
 enum Copier {
     private struct Cancelled: Error {}
 
-    static func run(_ srcs: [URL], into dir: URL, move: Bool, progress: TransferProgress) -> TransferResult {
+    static func run(_ srcs: [URL], into dir: URL, move: Bool, replace: Bool = false, progress: TransferProgress) -> TransferResult {
         var result = TransferResult()
         let fm = FileManager.default
         progress.setTotal(totalSize(srcs, progress))
@@ -40,8 +40,10 @@ enum Copier {
             if progress.cancelled { result.cancelled = true; break }
             progress.setItem(i + 1)
             var dest = dir.appendingPathComponent(src.lastPathComponent)
-            if src.standardizedFileURL == dest.standardizedFileURL || fm.fileExists(atPath: dest.path) {
+            if src.standardizedFileURL == dest.standardizedFileURL {
                 dest = dest.uniqueSibling()
+            } else if fm.fileExists(atPath: dest.path) {
+                if replace { try? fm.trashItem(at: dest, resultingItemURL: nil) } else { dest = dest.uniqueSibling() }
             }
             do {
                 try copy(src, to: dest, progress)

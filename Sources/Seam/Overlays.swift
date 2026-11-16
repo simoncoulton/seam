@@ -4,16 +4,26 @@ struct OverlayHost: View {
     private let ws = Workspace.shared
 
     var body: some View {
+        content
+            // Outside the `if`, so it also drives the removal when `overlay` goes back to nil.
+            .animation(.smooth(duration: 0.32), value: ws.overlay)
+    }
+
+    @ViewBuilder private var content: some View {
         if let overlay = ws.overlay {
             ZStack(alignment: .top) {
                 Color.black.opacity(0.35)
                     .onTapGesture { ws.overlay = nil }
+                    .transition(.opacity)
                 Group {
                     switch overlay {
                     case .search: SearchOverlay()
                     case .location: LocationOverlay()
                     case .shortcuts: ShortcutsOverlay()
-                    case .preview: PreviewPane(item: ws.tab.currentItem, large: true).frame(width: 720, height: 540)
+                    case .preview:
+                        PreviewPane(item: ws.tab.currentItem, large: true)
+                            .frame(width: ws.popupWidth, height: ws.popupHeight)
+                            .overlay(alignment: .bottomTrailing) { PopupResizeHandle() }
                     case .settings: SettingsOverlay()
                     }
                 }
@@ -21,8 +31,8 @@ struct OverlayHost: View {
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(ws.theme.dim.opacity(0.25)))
                 .shadow(color: .black.opacity(0.4), radius: 24, y: 8)
                 .padding(.top, 90)
+                .transition(.scale(scale: 0.92, anchor: .top).combined(with: .opacity).combined(with: .offset(y: -16)))
             }
-            .transition(.opacity)
         }
     }
 }
@@ -176,7 +186,7 @@ struct ShortcutsOverlay: View {
             ("⌃F  ⌃B", "Page down / up"), ("⌃O  Tab", "History back / forward"),
             ("gh  g/", "Home / root"), ("gt  gT", "Next / previous tab"),
             ("⌘F", "Fuzzy search"), ("⌘O  :", "Go to location"), ("Tab", "Complete path (in ⌘O)"),
-            ("/", "Filter column"),
+            ("/", "Filter column (⌃N ⌃P change sort, ⌃R reverses, while typing)"), ("s", "Cycle sort (count steps, ⇧S reverses). Remembered everywhere"),
         ]),
         ("Files", [
             ("Space", "Toggle preview"), ("⇧Space", "Preview in a popup (j k move, Space closes)"), ("v", "Play or pause the previewed video (popup: also Return, h l seek 5s)"), ("Return  r  F2", "Rename"), ("m", "Mark item"), ("⇧M", "Mark range"),
@@ -260,6 +270,10 @@ struct SettingsOverlay: View {
                         },
                     ])
                     group("Layout", [
+                        row("Column width") {
+                            slider(Binding(get: { Double(ws.columnWidth) }, set: { ws.columnWidth = CGFloat($0) }), 160...500, step: 10,
+                                   format: { "\(Int($0)) px" })
+                        },
                         toggle("Preview pane", Binding(get: { ws.showPreview }, set: { ws.showPreview = $0 })),
                         toggle("Sidebar", Binding(get: { ws.showSidebar }, set: { ws.showSidebar = $0 })),
                         toggle("Hide Pinned when empty", Binding(get: { ws.hidePinnedWhenEmpty }, set: { ws.hidePinnedWhenEmpty = $0 })),
@@ -333,15 +347,58 @@ struct SettingsOverlay: View {
         .pickerStyle(.segmented).labelsHidden().fixedSize()
     }
 
-    private func slider(_ value: Binding<Double>, _ range: ClosedRange<Double>, step: Double) -> some View {
+    private func slider(_ value: Binding<Double>, _ range: ClosedRange<Double>, step: Double, format: ((Double) -> String)? = nil) -> some View {
         HStack(spacing: 10) {
             Slider(value: value, in: range, step: step).frame(width: 190)
-            Text("\(Int((value.wrappedValue * 100).rounded()))%")
-                .font(.system(size: 13).monospacedDigit()).foregroundStyle(ws.theme.dim).frame(width: 42, alignment: .trailing)
+            Text(format?(value.wrappedValue) ?? "\(Int((value.wrappedValue * 100).rounded()))%")
+                .font(.system(size: 13).monospacedDigit()).foregroundStyle(ws.theme.dim).frame(width: 52, alignment: .trailing)
         }
     }
 
     private func button(_ title: String, _ action: @escaping () -> Void) -> some View {
         Button(title, action: action)
+    }
+}
+
+/// Bottom-right grip on the preview popup. The popup is centred horizontally, so the width changes twice as fast as
+/// the pointer to keep the corner under it.
+struct PopupResizeHandle: View {
+    private let ws = Workspace.shared
+    @StateObject private var start = Local<CGSize?>(nil)
+
+    var body: some View {
+        Image(systemName: "arrow.down.right.and.arrow.up.left")
+            .rotationEffect(.degrees(90))
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(ws.theme.dim.opacity(0.7))
+            .padding(6)
+            .frame(width: 28, height: 28)
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active: Self.cursor.set()
+                case .ended: if start.value == nil { NSCursor.arrow.set() }
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { drag in
+                        if start.value == nil { start.value = CGSize(width: ws.popupWidth, height: ws.popupHeight) }
+                        Self.cursor.set()
+                        let base = start.value ?? CGSize(width: 720, height: 540)
+                        let bounds = NSApp.keyWindow?.contentView?.bounds.size ?? CGSize(width: 1600, height: 1200)
+                        ws.popupWidth = min(max(base.width + drag.translation.width * 2, 400), max(400, bounds.width - 40))
+                        ws.popupHeight = min(max(base.height + drag.translation.height, 300), max(300, bounds.height - 110))
+                    }
+                    .onEnded { _ in start.value = nil; NSCursor.arrow.set() }
+            )
+    }
+
+    /// The diagonal resize cursor: public from macOS 15, a long-standing private selector before that.
+    private static var cursor: NSCursor {
+        if #available(macOS 15, *) { return NSCursor.frameResize(position: .bottomRight, directions: .all) }
+        let sel = NSSelectorFromString("_windowResizeNorthWestSouthEastCursor")
+        if NSCursor.responds(to: sel), let c = NSCursor.perform(sel)?.takeUnretainedValue() as? NSCursor { return c }
+        return .crosshair
     }
 }

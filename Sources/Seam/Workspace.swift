@@ -67,6 +67,9 @@ final class Workspace {
         }
     }
     var previewWidth: CGFloat = 300 { didSet { SettingsStore.update { $0.previewWidth = Double(previewWidth) } } }
+    var popupWidth: CGFloat = 720 { didSet { SettingsStore.update { $0.popupWidth = Double(popupWidth) } } }
+    var popupHeight: CGFloat = 540 { didSet { SettingsStore.update { $0.popupHeight = Double(popupHeight) } } }
+    var columnWidth: CGFloat = 250 { didSet { SettingsStore.update { $0.columnWidth = Double(columnWidth) } } }
     var hidePinnedWhenEmpty = false { didSet { SettingsStore.update { $0.hidePinnedWhenEmpty = hidePinnedWhenEmpty } } }
     var monoIcons = false { didSet { SettingsStore.update { $0.monoIcons = monoIcons } } }
     /// Window tint opacity; below 1 the window turns translucent with a blur behind it.
@@ -77,6 +80,8 @@ final class Workspace {
     private var transferProgress: TransferProgress?
     /// Players alive in the preview pane and popup. The newest one (the popup, if open) takes the playback keys.
     @ObservationIgnored private var players: [AVPlayer] = []
+    /// KVO on each player's volume and mute, so changes in the inline controls are remembered for the next preview.
+    @ObservationIgnored private var volumeWatch: [ObjectIdentifier: [NSKeyValueObservation]] = [:]
     /// Files this app copied or cut. Dropped as soon as something else takes over the system pasteboard.
     private(set) var clipboard: (urls: [URL], cut: Bool)?
     private var clipboardSeen = -1
@@ -106,6 +111,9 @@ final class Workspace {
         peekFolders = saved.peekFolders
         monoIcons = saved.monoIcons
         previewWidth = CGFloat(saved.previewWidth)
+        columnWidth = CGFloat(saved.columnWidth)
+        popupWidth = CGFloat(saved.popupWidth)
+        popupHeight = CGFloat(saved.popupHeight)
         hidePinnedWhenEmpty = saved.hidePinnedWhenEmpty
         opacity = saved.opacity
         tabs = [BrowserState(start: FileManager.default.homeDirectoryForCurrentUser)]
@@ -372,6 +380,21 @@ final class Workspace {
 
     func setFoldersFirst(_ on: Bool) { tabs.forEach { $0.foldersFirst = on; $0.refreshAll() } }
 
+    /// Steps the sort key through `SortKey.allCases`. Like every sort change it becomes the remembered default.
+    func cycleSort(_ step: Int) {
+        let all = SortKey.allCases
+        let i = all.firstIndex(of: tab.sortKey) ?? 0
+        setSort(key: all[((i + step) % all.count + all.count) % all.count])
+        announceSort()
+    }
+
+    func toggleSortDirection() {
+        setSort(ascending: !tab.ascending)
+        announceSort()
+    }
+
+    private func announceSort() { toast("Sort: \(tab.sortKey.rawValue) \(tab.ascending ? "↑" : "↓")") }
+
     func setSort(key: SortKey? = nil, ascending: Bool? = nil) { tabs.forEach { $0.setDefaultSort(key: key, ascending: ascending) } }
 
     func saveThemeCopy() {
@@ -478,13 +501,35 @@ final class Workspace {
     func paste() {
         syncClipboard()
         guard let source = clipboard else { return }
-        transfer(source.urls, into: tab.currentDir, move: source.cut)
+        let dir = tab.currentDir
+        // Items that would land on an existing file. Same-folder copies are deliberate duplicates, so they don't ask.
+        let clashes = source.urls.filter {
+            let dest = dir.appendingPathComponent($0.lastPathComponent)
+            return FileManager.default.fileExists(atPath: dest.path) && dest.realURL != $0.realURL
+        }
+        var replace = false
+        if !clashes.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = clashes.count == 1
+                ? "“\(clashes[0].lastPathComponent)” already exists. Replace it?"
+                : "\(clashes.count) items already exist. Replace them?"
+            alert.informativeText = "Replaced items go to the Trash. Choose Keep Both to paste copies with new names."
+            alert.addButton(withTitle: "Replace")
+            alert.addButton(withTitle: "Keep Both")
+            alert.addButton(withTitle: "Cancel")
+            switch alert.runModal() {
+            case .alertFirstButtonReturn: replace = true
+            case .alertSecondButtonReturn: break
+            default: return
+            }
+        }
+        transfer(source.urls, into: dir, move: source.cut, replace: replace)
         if source.cut { clipboard = nil }
     }
 
     /// Same-volume moves are renames, so they happen inline. Everything else copies on a background thread with
     /// progress (and Esc to cancel).
-    func transfer(_ urls: [URL], into dir: URL, move: Bool) {
+    func transfer(_ urls: [URL], into dir: URL, move: Bool, replace: Bool = false) {
         guard transferProgress == nil else { toast("A transfer is already running"); return }
         let fm = FileManager.default
         func volume(_ u: URL) -> NSObjectProtocol? { try? u.resourceValues(forKeys: [.volumeIdentifierKey]).volumeIdentifier }
@@ -495,7 +540,9 @@ final class Workspace {
             if src.deletingLastPathComponent().standardizedFileURL == dir.standardizedFileURL, move { continue }
             guard move, let a = volume(src), let b = target, a.isEqual(b) else { slow.append(src); continue }
             var dest = dir.appendingPathComponent(src.lastPathComponent)
-            if fm.fileExists(atPath: dest.path) { dest = dest.uniqueSibling() }
+            if fm.fileExists(atPath: dest.path) {
+                if replace { try? fm.trashItem(at: dest, resultingItemURL: nil) } else { dest = dest.uniqueSibling() }
+            }
             do {
                 try fm.moveItem(at: src, to: dest)
                 renamed.append((src, dest))
@@ -533,7 +580,7 @@ final class Workspace {
         }
         Task { @MainActor in
             let result = await Task.detached(priority: .userInitiated) {
-                Copier.run(slow, into: dir, move: move, progress: progress)
+                Copier.run(slow, into: dir, move: move, replace: replace, progress: progress)
             }.value
             poller.cancel()
             transferStatus = nil
@@ -559,11 +606,24 @@ final class Workspace {
     func registerPlayer(_ p: AVPlayer, autoplay: Bool) {
         players.forEach { $0.pause() }
         players.append(p)
+        p.volume = Float(SettingsStore.current.previewVolume)
+        p.isMuted = SettingsStore.current.previewMuted
+        volumeWatch[ObjectIdentifier(p)] = [
+            p.observe(\.volume, options: [.new]) { _, c in
+                guard let v = c.newValue else { return }
+                Task { @MainActor in SettingsStore.update { $0.previewVolume = Double(v) } }
+            },
+            p.observe(\.isMuted, options: [.new]) { _, c in
+                guard let m = c.newValue else { return }
+                Task { @MainActor in SettingsStore.update { $0.previewMuted = m } }
+            },
+        ]
         if autoplay { p.play() }
     }
 
     func unregisterPlayer(_ p: AVPlayer) {
         p.pause()
+        volumeWatch[ObjectIdentifier(p)] = nil
         players.removeAll { $0 === p }
     }
 
@@ -691,6 +751,9 @@ final class Workspace {
         tab.reload(tab.focus) { [tab] in
             let col = tab.focus
             guard let item = tab.columns[col].shown.first(where: { $0.name == name }) else { return }
+            // The new item becomes the selection, so earlier marks no longer apply (and would otherwise
+            // redirect copy, trash and the like away from it).
+            tab.marks = []
             tab.select(item.url, inColumn: col)
             tab.renaming = item.url
         }
@@ -718,6 +781,9 @@ final class Workspace {
         run("/usr/bin/zip", ["-r", "-q", dest.path] + names, cwd: dir, done: "Created \(dest.lastPathComponent)")
     }
 
+    /// Archives Seam extracts itself (into a new tab) instead of handing them to Archive Utility, which opens Finder.
+    static let archiveExtensions: Set<String> = ["zip", "tar", "gz", "tgz", "bz2", "xz"]
+
     func extract() {
         guard let item = tab.currentItem else { return }
         let dir = tab.currentDir
@@ -726,15 +792,15 @@ final class Workspace {
         let target = dir.appendingPathComponent(stem)
         let dest = FileManager.default.fileExists(atPath: target.path) ? target.uniqueSibling(suffix: " ") : target
         switch ext {
-        case "zip": run("/usr/bin/ditto", ["-x", "-k", item.url.path, dest.path], cwd: dir, done: "Extracted \(stem)")
+        case "zip": run("/usr/bin/ditto", ["-x", "-k", item.url.path, dest.path], cwd: dir, done: "Extracted \(stem)") { [self] in newTab(at: dest) }
         case "tar", "gz", "tgz", "bz2", "xz":
             try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
-            run("/usr/bin/tar", ["-xf", item.url.path, "-C", dest.path], cwd: dir, done: "Extracted \(stem)")
+            run("/usr/bin/tar", ["-xf", item.url.path, "-C", dest.path], cwd: dir, done: "Extracted \(stem)") { [self] in newTab(at: dest) }
         default: toast("Not an archive Seam can extract")
         }
     }
 
-    private func run(_ exe: String, _ args: [String], cwd: URL, done: String) {
+    private func run(_ exe: String, _ args: [String], cwd: URL, done: String, onSuccess: (() -> Void)? = nil) {
         Task {
             let ok = await Task.detached { () -> Bool in
                 let p = Process()
@@ -747,7 +813,43 @@ final class Workspace {
             }.value
             toast(ok ? done : "Operation failed")
             tab.reloadAll()
+            if ok { onSuccess?() }
         }
+    }
+
+    // MARK: Open With
+
+    /// Apps that can open `url`, default first, then alphabetical. Icons are shrunk for menu use.
+    func applications(toOpen url: URL) -> [(url: URL, name: String, icon: NSImage)] {
+        let ws = NSWorkspace.shared
+        let def = ws.urlForApplication(toOpen: url)
+        var seen = Set<URL>()
+        let urls = ([def].compactMap { $0 } + ws.urlsForApplications(toOpen: url)).filter { seen.insert($0.realURL).inserted }
+        let apps = urls.map { u -> (url: URL, name: String, icon: NSImage) in
+            let icon = ws.icon(forFile: u.path)
+            icon.size = NSSize(width: 16, height: 16)
+            return (u, FileManager.default.displayName(atPath: u.path).replacingOccurrences(of: ".app", with: ""), icon)
+        }
+        guard let def else { return apps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
+        let rest = apps.filter { $0.url.realURL != def.realURL }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        return apps.filter { $0.url.realURL == def.realURL } + rest
+    }
+
+    func openWith(_ urls: [URL], app: URL) {
+        guard !urls.isEmpty else { return }
+        NSWorkspace.shared.open(urls, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    func chooseApplication(for urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Open With"
+        panel.prompt = "Open"
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let app = panel.url { openWith(urls, app: app) }
     }
 
     func copyPath() {
@@ -833,6 +935,14 @@ final class Workspace {
         if tab.filtering != nil {
             if code == 53 { tab.clearFilter(); return true }
             if code == 36 { tab.endFilter(); return true }
+            if ctrl, !cmd, !opt {
+                switch letter {
+                case "n": cycleSort(1); return true
+                case "p": cycleSort(-1); return true
+                case "r": toggleSortDirection(); return true
+                default: break
+                }
+            }
             return false
         }
         if isEditingText {
@@ -931,6 +1041,8 @@ final class Workspace {
         case ("y", _): copy(cut: false)
         case ("p", _): paste()
         case ("v", _): togglePlayback()
+        case ("s", _) where shift: toggleSortDirection()
+        case ("s", _): cycleSort(count)
         case ("t", _): openTerminal()
         case (_, 44) where !shift: tab.beginFilter()
         case (_, 47): tab.showHidden.toggle()

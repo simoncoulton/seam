@@ -46,8 +46,13 @@ struct Settings {
     var peekFolders = false
     var showPreview = true
     var previewWidth = 300.0
+    var columnWidth = 250.0
+    var popupWidth = 720.0
+    var popupHeight = 540.0
     var showSidebar = true
     var hidePinnedWhenEmpty = false
+    var previewVolume = 1.0
+    var previewMuted = false
 
     init() {}
 
@@ -66,8 +71,13 @@ struct Settings {
         if let v = y["peek_folders"]?.bool { peekFolders = v }
         if let v = y["show_preview"]?.bool { showPreview = v }
         if let v = y["preview_width"]?.double { previewWidth = min(max(v, 220), 560) }
+        if let v = y["column_width"]?.double { columnWidth = min(max(v, 160), 500) }
+        if let v = y["popup_width"]?.double { popupWidth = max(v, 400) }
+        if let v = y["popup_height"]?.double { popupHeight = max(v, 300) }
         if let v = y["show_sidebar"]?.bool { showSidebar = v }
         if let v = y["hide_pinned_when_empty"]?.bool { hidePinnedWhenEmpty = v }
+        if let v = y["preview_volume"]?.double { previewVolume = min(max(v, 0), 1) }
+        if let v = y["preview_muted"]?.bool { previewMuted = v }
     }
 
     var yaml: YAML {
@@ -84,8 +94,13 @@ struct Settings {
             ("peek_folders", .bool(peekFolders)),
             ("show_preview", .bool(showPreview)),
             ("preview_width", .int(Int(previewWidth))),
+            ("column_width", .int(Int(columnWidth))),
+            ("popup_width", .int(Int(popupWidth))),
+            ("popup_height", .int(Int(popupHeight))),
             ("show_sidebar", .bool(showSidebar)),
             ("hide_pinned_when_empty", .bool(hidePinnedWhenEmpty)),
+            ("preview_volume", .double((previewVolume * 100).rounded() / 100)),
+            ("preview_muted", .bool(previewMuted)),
         ])
     }
 

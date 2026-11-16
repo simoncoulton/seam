@@ -10,7 +10,7 @@ final class ScrollSettle: ObservableObject {
 struct MillerView: View {
     let tab: BrowserState
     private let ws = Workspace.shared
-    private let columnWidth: CGFloat = 250
+    private var columnWidth: CGFloat { ws.columnWidth }
     @StateObject private var settle = ScrollSettle()
 
     var body: some View {
@@ -95,6 +95,12 @@ struct ColumnView: View {
                 .onChange(of: column.selected) { _, new in
                     guard let new, focused else { return }
                     proxy.scrollTo(new)
+                }
+                // The rename field is taller than a plain row and appears a beat after the selection, so scroll again
+                // once it is laid out. Ids that aren't in this column are ignored.
+                .onChange(of: tab.renaming) { _, url in
+                    guard let url else { return }
+                    DispatchQueue.main.async { proxy.scrollTo(url, anchor: .center) }
                 }
                 .onAppear { if let s = column.selected { proxy.scrollTo(s, anchor: .center) } }
             }
@@ -195,15 +201,16 @@ struct SortBar: View {
                     .hoverable(5)
                     .animation(.easeOut(duration: 0.15), value: active)
                     .contentShape(Rectangle())
-                    .onTapGesture { tab.setSort(key: key, inColumn: index) }
+                    .onTapGesture { ws.setSort(key: key) }
+                    .help("Sort by \(key.rawValue) (⌃N / ⌃P cycle)")
             }
             Spacer(minLength: 0)
-            Button { tab.setSort(ascending: !s.ascending, inColumn: index) } label: {
+            Button { ws.setSort(ascending: !s.ascending) } label: {
                 Image(systemName: s.ascending ? "arrow.up" : "arrow.down")
                     .font(.system(size: 9, weight: .semibold)).padding(5)
             }
             .buttonStyle(.plain).foregroundStyle(theme.dim).hoverable(5)
-            .help(s.ascending ? "Ascending: click for descending" : "Descending: click for ascending")
+            .help((s.ascending ? "Ascending: click for descending" : "Descending: click for ascending") + " (⌃R)")
         }
     }
 }
@@ -404,6 +411,7 @@ struct ContextMenuItems: View {
     var body: some View {
         if let item {
             Button("Open") { ws.tab.openSelected() }.keyboardShortcut(.downArrow)
+            OpenWithMenu(item: item)
             if item.isCloudOnly { Button("Download Now") { ws.download(item) } }
             Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
             Divider()
@@ -432,6 +440,29 @@ struct ContextMenuItems: View {
             Button("New Folder") { ws.newFolder() }.keyboardShortcut("n", modifiers: [.command, .shift])
             Button("Paste") { ws.paste() }.keyboardShortcut("v")
             Button("Open Terminal Here") { ws.openTerminal() }
+        }
+    }
+}
+
+/// "Open With" submenu: the apps registered for the file, the default first, then "Other…".
+struct OpenWithMenu: View {
+    let item: FileItem
+    private let ws = Workspace.shared
+
+    var body: some View {
+        let apps = ws.applications(toOpen: item.url)
+        // The row that was right-clicked, not the selection (a right-click doesn't move it). Marks only count when
+        // the clicked row is one of them.
+        let urls = ws.tab.marks.contains(item.url) ? Array(ws.tab.marks) : [item.url]
+        Menu("Open With") {
+            ForEach(Array(apps.enumerated()), id: \.element.url) { i, app in
+                Button { ws.openWith(urls, app: app.url) } label: {
+                    Label { Text(i == 0 ? "\(app.name) (default)" : app.name) } icon: { Image(nsImage: app.icon) }
+                }
+                if i == 0 && apps.count > 1 { Divider() }
+            }
+            if !apps.isEmpty { Divider() }
+            Button("Other…") { ws.chooseApplication(for: urls) }
         }
     }
 }
